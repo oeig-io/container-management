@@ -1,0 +1,8 @@
+# Enforce Unix line endings
+* text=auto eol=lf
+
+# Shell scripts must have LF
+*.sh text eol=lf
+
+# Config files must have LF
+*.conf text eol=lf
