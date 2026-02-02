@@ -129,8 +129,8 @@ echo ""
 # Step 3: Pre-seed download (if configured)
 echo ">>> Step 3: Pre-seeding download..."
 if [[ -n "${SEED_FILE:-}" && -n "${SEED_DIR:-}" && -f "$SEED_DIR/$SEED_FILE" ]]; then
-    incus exec "$CONTAINER" -- mkdir -p /tmp/seed
-    incus file push "$SEED_DIR/$SEED_FILE" "$CONTAINER/tmp/seed/"
+    incus exec "$CONTAINER" -- mkdir -p /tmp/idempiere-seed
+    incus file push "$SEED_DIR/$SEED_FILE" "$CONTAINER/tmp/idempiere-seed/"
     echo "    Pre-seeded from $SEED_DIR/$SEED_FILE"
 else
     echo "    No seed file configured or found (skipped)"
