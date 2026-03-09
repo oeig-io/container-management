@@ -131,7 +131,7 @@ echo ""
 echo ">>> Step 3: Pre-seeding download..."
 if [[ -n "${SEED_FILE:-}" && -n "${SEED_DIR:-}" && -f "$SEED_DIR/$SEED_FILE" ]]; then
     incus exec "$CONTAINER" -- mkdir -p /tmp/idempiere-seed
-    incus file push "$SEED_DIR/$SEED_FILE" "$CONTAINER/tmp/idempiere-seed/"
+    incus file push "$SEED_DIR/$SEED_FILE" "$CONTAINER/tmp/idempiere-seed/" -q
     echo "    Pre-seeded from $SEED_DIR/$SEED_FILE"
 else
     echo "    No seed file configured or found (skipped)"
@@ -142,7 +142,7 @@ echo ""
 echo ">>> Step 4: Pushing installer repo..."
 incus exec "$CONTAINER" -- mkdir -p "$INSTALL_PATH"
 # Must push from within the repo directory to avoid nesting
-(cd "$INSTALLER_REPO_PATH" && incus file push -r . "$CONTAINER$INSTALL_PATH/")
+(cd "$INSTALLER_REPO_PATH" && incus file push -rq . "$CONTAINER$INSTALL_PATH/")
 echo "    Repo pushed to $INSTALL_PATH/"
 echo ""
 
