@@ -66,8 +66,7 @@ fi
 source "$SCRIPT_DIR/$CONFIG_FILE"
 
 # Validate required config variables
-for var in PREFIX PORT_BASE CONNECT_PORT MEMORY CPU DISK INSTALL_PATH INSTALLER_REPO \
-           HEALTH_ENDPOINT HEALTH_EXPECTED HEALTH_TIMEOUT HEALTH_INTERVAL; do
+for var in PREFIX PORT_BASE CONNECT_PORT MEMORY CPU DISK INSTALL_PATH INSTALLER_REPO; do
     if [[ -z "${!var:-}" ]]; then
         echo "ERROR: Required config variable $var not set in $CONFIG_FILE"
         exit 1
@@ -164,21 +163,25 @@ echo "    Installation complete."
 echo ""
 
 # Step 6: Wait for health check
-echo ">>> Step 6: Waiting for service to be ready..."
-max_attempts=$((HEALTH_TIMEOUT / HEALTH_INTERVAL))
-for i in $(seq 1 "$max_attempts"); do
-    status=$(incus exec "$CONTAINER" -- curl -s -o /dev/null -w "%{http_code}" "$HEALTH_ENDPOINT" 2>/dev/null || echo "000")
-    if [[ "$status" == "$HEALTH_EXPECTED" ]]; then
-        echo "    Service is ready! (attempt $i)"
-        break
-    fi
-    if [[ $i -eq $max_attempts ]]; then
-        echo "    ERROR: Timeout waiting for service after $max_attempts attempts"
-        exit 1
-    fi
-    echo "    Attempt $i: HTTP $status (waiting...)"
-    sleep "$HEALTH_INTERVAL"
-done
+if [[ -n "${HEALTH_ENDPOINT:-}" && "${HEALTH_TIMEOUT:-0}" -gt 0 ]]; then
+    echo ">>> Step 6: Waiting for service to be ready..."
+    max_attempts=$((HEALTH_TIMEOUT / HEALTH_INTERVAL))
+    for i in $(seq 1 "$max_attempts"); do
+        status=$(incus exec "$CONTAINER" -- curl -s -o /dev/null -w "%{http_code}" "$HEALTH_ENDPOINT" 2>/dev/null || echo "000")
+        if [[ "$status" == "$HEALTH_EXPECTED" ]]; then
+            echo "    Service is ready! (attempt $i)"
+            break
+        fi
+        if [[ $i -eq $max_attempts ]]; then
+            echo "    ERROR: Timeout waiting for service after $max_attempts attempts"
+            exit 1
+        fi
+        echo "    Attempt $i: HTTP $status (waiting...)"
+        sleep "$HEALTH_INTERVAL"
+    done
+else
+    echo ">>> Step 6: Skipping health check (no endpoint configured)"
+fi
 echo ""
 
 echo "=== Container Launch Complete ==="
