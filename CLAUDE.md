@@ -10,9 +10,13 @@ Generic container lifecycle management for NixOS incus containers. This module h
 
 The system uses a config-driven approach:
 
-1. **Config files** (`configs/*.conf`) - Define container type settings
-2. **Launch script** (`launch.sh`) - Generic container lifecycle manager
-3. **Installer repos** (external) - Application-specific installation scripts
+1. **Config files** — Define container type settings. Two locations:
+   - `configs/*.conf` — for `install-*` repos (1:N factory pattern)
+   - Inside each `host-*` repo as `launch.conf` — for `host-*` repos (1:1 dedicated pattern)
+2. **Launch script** (`launch.sh`) — Generic container lifecycle manager; accepts either config location
+3. **Application payload repos** (external) — Two variants:
+   - `install-*` — closed systems, no out-of-repo inputs
+   - `host-*` — open systems, secrets couriered via `--secrets`
 
 ## Key Commands
 
@@ -37,11 +41,15 @@ The system uses a config-driven approach:
 container-management/
 ├── launch.sh               # Generic config-driven launcher
 ├── configs/
-│   ├── idempiere.conf     # iDempiere container config
-│   └── metabase.conf      # Metabase container config
+│   ├── idempiere.conf     # iDempiere container config (install-*)
+│   ├── metabase.conf      # Metabase container config (install-*)
+│   ├── npm.conf           # npm prerequisites config (install-*)
+│   └── opencode.conf      # opencode config (install-*)
 ├── README.md              # User documentation
 └── CLAUDE.md              # This file
 ```
+
+Note: `host-*` repos ship their own `launch.conf` inside the repo itself — not in `configs/`.
 
 ## Config File Format
 
@@ -87,24 +95,39 @@ design.
 
 ## Port Conventions
 
-| Type | Prefix | Port Range | Example |
-|------|--------|------------|---------|
-| iDempiere | id- | 9000-9099 | id-47 -> 9047 |
-| Metabase | mb- | 9100-9199 | mb-01 -> 9101 |
+| Type | Pattern | Prefix | Port Range | Example |
+|------|---------|--------|------------|---------|
+| iDempiere | install-* | id- | 9000-9099 | id-47 -> 9047 |
+| Metabase | install-* | mb- | 9100-9199 | mb-01 -> 9101 |
+| host-elevenlabs | host-* | elevenlabs- | n/a (outbound-only, `CONNECT_PORT=0`) | elevenlabs-01 |
+
+`host-*` containers commonly run with `PORT_BASE=0` / `CONNECT_PORT=0` because they do not expose an inbound service — they poll outward and push to other systems.
 
 ## Installer Contract
 
 Each installer repo must provide:
-- `install.sh` - Takes no arguments, runs inside the container
+- `install.sh` — Takes no arguments, runs inside the container
 - Assumes NixOS base system
 - Handles all application-specific setup
 
+For `host-*` repos, `install.sh` should additionally:
+- `test -f <SECRETS_TARGET>` as its first step (fail fast if the secrets courier step was skipped)
+- Wire its `.nix` modules into `/etc/nixos/configuration.nix` via idempotent `grep -q` + `sed`
+- End with `sudo nixos-rebuild switch` (always use `sudo`, even when running as root)
+
 ## Common Operations
 
-**Delete and recreate container:**
+**Delete and recreate an install-* container:**
 ```bash
 incus delete id-47 --force
 ./launch.sh configs/idempiere.conf id-47
+```
+
+**Delete and recreate a host-* container (iteration workflow):**
+```bash
+incus delete elevenlabs-01 --force
+./launch.sh ../host-elevenlabs/launch.conf elevenlabs-01 \
+    --secrets ~/.config/oeig/host-elevenlabs.env
 ```
 
 **Manual install with environment variables:**
@@ -113,8 +136,8 @@ incus delete id-47 --force
 incus exec id-47 -- env SOME_VAR=value /opt/idempiere-install/install.sh
 ```
 
-**Launch a host-* container with secrets:**
-```bash
-./launch.sh ../host-elevenlabs/launch.conf elevenlabs-01 \
-    --secrets ~/.config/oeig/host-elevenlabs.env
-```
+## Ownership Invariant on `$INSTALL_PATH`
+
+After `incus file push -r` delivers the repo to `$INSTALL_PATH`, `launch.sh` runs `chown -R root:root $INSTALL_PATH`. Without this step, `incus file push` preserves the pusher's uid/gid (typically `1000:1000` on the operator's machine), which maps to whichever container user happens to have uid `1000` — often the unprivileged service user in a `host-*` container. That would let the service user mutate its own code at runtime, violating the couriers-not-configurators principle.
+
+The step is unconditional and harmless for `install-*` (whose install paths are throwaway anyway).

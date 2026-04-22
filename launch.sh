@@ -196,7 +196,12 @@ echo ">>> Step 4: Pushing installer repo..."
 incus exec "$CONTAINER" -- mkdir -p "$INSTALL_PATH"
 # Must push from within the repo directory to avoid nesting
 (cd "$INSTALLER_REPO_PATH" && incus file push -rq . "$CONTAINER$INSTALL_PATH/")
-echo "    Repo pushed to $INSTALL_PATH/"
+# Normalize ownership: the application payload is couriered content, owned by root.
+# Without this, `incus file push -r` preserves the pusher's uid/gid (e.g., host uid
+# 1000 maps to whatever container user has uid 1000). That would let the service
+# user mutate its own code — violates the couriers-not-configurators principle.
+incus exec "$CONTAINER" -- chown -R root:root "$INSTALL_PATH"
+echo "    Repo pushed to $INSTALL_PATH/ (owned by root:root)"
 echo ""
 
 # Step 5: Push secrets (if --secrets given)
@@ -205,7 +210,7 @@ if [[ -n "$SECRETS_SOURCE" ]]; then
     SECRETS_PARENT="$(dirname "$SECRETS_TARGET")"
     incus exec "$CONTAINER" -- mkdir -p "$SECRETS_PARENT"
     incus exec "$CONTAINER" -- chown root:root "$SECRETS_PARENT"
-    incus exec "$CONTAINER" -- chmod 0700 "$SECRETS_PARENT"
+    incus exec "$CONTAINER" -- chmod 0711 "$SECRETS_PARENT"
     incus file push --mode=0600 --uid=0 --gid=0 -q \
         "$SECRETS_SOURCE" "$CONTAINER$SECRETS_TARGET"
     echo "    Secrets pushed to $SECRETS_TARGET (0600 root:root)"
