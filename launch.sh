@@ -156,9 +156,9 @@ if incus info "$CONTAINER" &>/dev/null; then
 fi
 
 # Step 1: Create container
-NIXOS_IMAGE="${NIXOS_IMAGE:-nixos/25.11}"
+NIXOS_IMAGE="${NIXOS_IMAGE:-images:nixos/25.11}"
 echo ">>> Step 1: Creating NixOS container (image: ${NIXOS_IMAGE})..."
-incus launch images:${NIXOS_IMAGE} "$CONTAINER" \
+incus launch "${NIXOS_IMAGE}" "$CONTAINER" \
     -c security.nesting=true \
     -c limits.memory="$MEMORY" \
     -c limits.cpu="$CPU" \

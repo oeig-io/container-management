@@ -66,7 +66,7 @@ Config files are sourced as bash scripts. Required variables:
 Optional variables:
 
 - `SEED_DIR`, `SEED_FILE` - Pre-seed a file into the container before install
-- `NIXOS_IMAGE` - Override base image (default `nixos/25.11`)
+- `NIXOS_IMAGE` - Override base image as a full incus image reference (default `images:nixos/25.11`). Use `images:nixos/...` for remote, or a local alias/fingerprint for cached images.
 - `SECRETS_TARGET` - Absolute path on container where `--secrets <path>`
   couriers a local secrets file (0600 root:root). Required **only** when
   `--secrets` is passed; `install-*` configs should not set it.
