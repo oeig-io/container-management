@@ -336,6 +336,40 @@ cd container-management
 
 > 💡 **Tip** — Iterate `myname-01`, `-02`, `-03` until the repo is right (delete and relaunch freely). Bless `myname-00` only after two consecutive clean launches. See the planning doc for the `host-elevenlabs` repo for the iteration discipline.
 
+### Step 5: Enable Delete Protection on the Production Singleton
+
+**A blessed `host-*` production singleton (`myname-00`) must have incus
+delete/termination protection enabled.** This is important because a `host-*`
+`-00` container is a long-lived, one-of-a-kind production identity — unlike the
+throwaway `-01`/`-02` iterations, losing it means losing production. Incus
+`security.protection.delete` makes `incus delete` fail closed until the flag is
+deliberately cleared, so no reflex or scripted deletion can wipe production.
+
+Enable it the moment you bless `-00` (and only on `-00`, never on the disposable
+iterations):
+
+```bash
+incus config set myname-00 security.protection.delete=true
+```
+
+Verify:
+
+```bash
+incus config get myname-00 security.protection.delete   # -> true
+```
+
+Deleting a protected singleton is therefore a two-step, deliberate act — clear
+the flag first, then delete:
+
+```bash
+incus config set myname-00 security.protection.delete=false
+incus delete myname-00
+```
+
+> ⚠️ **Warning** — This is a mandatory step of blessing `-00`, not optional
+> hardening. Audit it periodically: every `*-00` `host-*` container should
+> report `security.protection.delete=true`.
+
 ## Config File Reference
 
 Required variables in config files:
