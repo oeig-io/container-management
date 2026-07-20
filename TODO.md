@@ -1,8 +1,8 @@
 # TODO
 
-- [x] need to make parameter where can chose nixos unstable - currently hard-coded to 25.11
-  - Added NIXOS_IMAGE parameter in launch.sh (defaults to nixos/25.11)
-  - Configs can override with NIXOS_IMAGE="nixos/unstable"
+- [x] need to make parameter where can chose nixos unstable - currently hard-coded
+  - Added NIXOS_IMAGE parameter in launch.sh (defaults to images:nixos/26.05)
+  - Configs can override with NIXOS_IMAGE="images:nixos/unstable"
 - [x] need new install-opencode
   - [x] uses nixos unstable (via configs/opencode.conf)
   - [x] opencode service runs as 'opencode' user

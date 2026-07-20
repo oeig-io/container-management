@@ -362,7 +362,7 @@ Optional variables:
 | `SEED_DIR` | Pre-seed directory inside container | `"/opt/app-seed"` |
 | `SEED_FILE` | Pre-seed filename (empty string to skip) | `"app.zip"`, `""` |
 | `SECRETS_TARGET` | Absolute path inside container where `--secrets` file lands (`0600 root:root`). Required **only** when `--secrets` is passed on the CLI. | `"/var/lib/elevenlabs/env"` |
-| `NIXOS_IMAGE` | Full incus image reference to launch from | `"images:nixos/25.11"`, `"images:nixos/unstable"`, `"nixos-25-11"` (local alias) |
+| `NIXOS_IMAGE` | Full incus image reference to launch from | `"images:nixos/26.05"`, `"images:nixos/unstable"`, or a local alias/fingerprint for cached images |
 
 ## Secrets (host-* containers)
 
