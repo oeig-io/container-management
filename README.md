@@ -405,6 +405,38 @@ scheduled unit's timer in its own module so a clone can delete the schedule and
 keep the capability. The skill's "Subtract, Never Shadow" section explains why an
 override module is the wrong instinct.
 
+#### Give Every Payload Timer a Clone Buffer
+
+**A timer in a `host-*`/`install-*` payload must not be able to fire during a
+clone's first boot. Set `OnBootSec` to at least 15 minutes.**
+
+This is important because subtracting a timer's module removes its *declaration*,
+not the unit. NixOS boots the generation the **source** built, and
+`configuration.nix` is only input to a rebuild — so a subtracted timer is live
+from the clone's first boot until the clone script's `nixos-rebuild switch` tears
+it down. A timer that elapses inside that gap runs on a machine holding
+production's credentials that nothing has sanitized yet.
+
+The buffer has to be generous because there is no way to boot a container without
+timers: the mechanisms that would do it (`systemd.mask=` on the kernel command
+line, an offline `/dev/null` mask under `/etc/systemd/system`) are unavailable to
+a container or blocked by read-only Nix-rendered `/etc`. A clone script needs a
+few minutes to settle the boot and disarm; 15 minutes leaves headroom for a slow
+boot and for someone cloning by hand.
+
+Two companions to get right at the same time:
+
+- **`Persistent=` only works with `OnCalendar=`.** On a monotonic timer
+  (`OnUnitActiveSec=`) it is inert, so do not use it to promise catch-up after
+  downtime — switch the cadence to `OnCalendar=` if catch-up is what you want.
+  Note that `OnCalendar=` **plus** `Persistent=true` fires *immediately* on boot
+  when a run was missed, which defeats the buffer: pair it with
+  `RandomizedDelaySec=` past the window, or accept that the clone script's
+  disarm is the only guard.
+- **Never shorten the buffer to make a job start sooner.** A job that must run at
+  boot is a job that has no buffer; give it a `ConditionPathExists=` or an
+  environment gate instead, so a clone can decline it.
+
 ## Config File Reference
 
 Required variables in config files:
