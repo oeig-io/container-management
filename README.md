@@ -93,6 +93,7 @@ A repo that owns a single long-lived container identity. The repo is an **open s
 | `INSTALL_PATH` convention | `/opt/<name>/` — unified path; the repo **is** the runtime |
 | Secrets at bootstrap | Couriered via `launch.sh --secrets` to `SECRETS_TARGET` |
 | Ownership invariant | `launch.sh` enforces `root:root` on `INSTALL_PATH` post-push (see [Standard 2](#standard-2-container-orchestration), step 4) |
+| Clone script | `clone.sh` in the repo root, written and audited against the `incus-instance-clone` skill — see [Step 6](#step-6-author-the-clone-script) |
 
 **Examples**:
 - [github.com/oeig-io/host-elevenlabs](https://github.com/oeig-io/host-elevenlabs) — ElevenLabs → iDempiere + Zulip sync; first `host-*` repo
@@ -288,6 +289,8 @@ host-myname/
 ├── CLAUDE.md                   # AI-agent guidance
 ├── launch.conf                 # Container config (lives HERE, not in configs/)
 ├── install.sh                  # Prereq check + wire .nix + nixos-rebuild
+├── clone.sh                    # Clone into a distinct machine (see Step 6)
+├── nix-modules.conf            # Manifest: every .nix and its clone disposition
 ├── myname-prerequisites.nix    # Base packages
 ├── myname-service.nix          # Service user, systemd unit, tmpfiles
 ├── bin/                        # Runtime code (Python, scripts, etc.)
@@ -368,7 +371,39 @@ incus delete myname-00
 
 > ⚠️ **Warning** — This is a mandatory step of blessing `-00`, not optional
 > hardening. Audit it periodically: every `*-00` `host-*` container should
-> report `security.protection.delete=true`.
+> report `security.protection.delete=true`. The flag belongs to the singleton
+> **only** — a clone that wears it cannot be rolled back or reaped, and clearing
+> it routinely on clones is what eventually gets it cleared on production. Clone
+> scripts set it `false` explicitly rather than inheriting it.
+
+### Step 6: Author the Clone Script
+
+**A `host-*` repo ships a `clone.sh`, and the `incus-instance-clone` skill is its
+specification.** This is important because a long-lived singleton accumulates
+things a generic copy cannot know about — an application-level production flag,
+a licensed artifact, a credential that writes to a shared destination. Only this
+repo knows that list, so the clone script is part of the payload contract, not an
+afterthought someone improvises later under pressure.
+
+Write it against that skill's **Clone Script Checklist**, which covers the three
+phases a clone must pass (machine identity, egress authority, application
+sanitization), the all-or-nothing failure contract, and the verification that
+gates it. `host-idempiere/clone.sh` is the worked example.
+
+Two obligations outlive the first draft:
+
+- **Re-run the checklist whenever the payload changes.** A new `.nix` module, a
+  new credential, or a new outbound integration can invalidate a clone script
+  that still reports success. Say so in the repo's `CLAUDE.md`.
+- **Make the drift mechanical where you can.** Classify every `.nix` in one
+  manifest and have `install.sh`, the deploy script, and `clone.sh` all read it,
+  so an unclassified module fails the run instead of shipping in a clone. See
+  `host-idempiere/nix-modules.conf`.
+
+Compose the payload so a clone is defined by what its config **omits**: keep a
+scheduled unit's timer in its own module so a clone can delete the schedule and
+keep the capability. The skill's "Subtract, Never Shadow" section explains why an
+override module is the wrong instinct.
 
 ## Config File Reference
 
