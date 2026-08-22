@@ -11,6 +11,11 @@ Generic container lifecycle management for NixOS-based application deployments u
     - [Variant B: host-* (dedicated, 1:1)](#variant-b-host--dedicated-11)
   - [Standard 2: Container Orchestration](#standard-2-container-orchestration)
 - [Quick Start](#quick-start)
+  - [Spin Up a Throwaway NixOS Container](#spin-up-a-throwaway-nixos-container)
+  - [Create an iDempiere Container](#create-an-idempiere-container)
+  - [Create a Metabase Container](#create-a-metabase-container)
+  - [Create a host-* Container With Secrets](#create-a-host--container-with-secrets)
+  - [Create Without Installing](#create-without-installing)
 - [Configuration](#configuration)
 - [Secrets (host-* containers)](#secrets-host--containers)
 - [Adding a New install-* Container Type](#adding-a-new-install--container-type)
@@ -134,6 +139,34 @@ A repo that owns a single long-lived container identity. The repo is an **open s
 > 💡 **Tip** — The `chown -R root:root` step is harmless for `install-*` (whose install paths are throwaway anyway) and essential for `host-*` (where the install path is the live runtime). It runs unconditionally.
 
 ## Quick Start
+
+### Spin Up a Throwaway NixOS Container
+
+For experiments where you need a NixOS container and nothing more — no config, no install, no payload repo — `incus launch` directly is enough. This is exactly what `launch.sh` runs as Step 1 of its orchestration flow.
+
+```bash
+incus launch images:nixos/26.05 <name> -c security.nesting=true
+```
+
+`security.nesting=true` is what lets NixOS actually work inside the container. Add resource bounds only if you want them:
+
+```bash
+incus launch images:nixos/26.05 <name> \
+    -c security.nesting=true \
+    -c limits.memory=2GiB \
+    -c limits.cpu=2 \
+    -d root,size=10GiB
+```
+
+Then:
+
+```bash
+incus exec <name> -- bash          # interactive
+incus exec <name> -- nixos-version # one-shot
+incus delete <name> --force        # nuke it
+```
+
+> 💡 **Tip** — Use this for sandboxing experiments (NixOS config tweaks, one-off reproductions, poking at a freshly-released image). For anything that should land as a managed container — a service, a payload with secrets, a clone of production — use the config-driven `./launch.sh configs/<app>.conf <name>` path below.
 
 ### Create an iDempiere Container
 
