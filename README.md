@@ -20,6 +20,7 @@ Generic container lifecycle management for NixOS-based application deployments u
 - [Secrets (host-* containers)](#secrets-host--containers)
 - [Adding a New install-* Container Type](#adding-a-new-install--container-type)
 - [Adding a New host-* Container](#adding-a-new-host--container)
+- [Migrating an install-* Repo to host-*](#migrating-an-install--repo-to-host--)
 - [Config File Reference](#config-file-reference)
 
 ## Summary
@@ -469,6 +470,24 @@ Two companions to get right at the same time:
 - **Never shorten the buffer to make a job start sooner.** A job that must run at
   boot is a job that has no buffer; give it a `ConditionPathExists=` or an
   environment gate instead, so a clone can decline it.
+
+## Migrating an install-* Repo to host-*
+
+The purpose of this section is to define how a factory payload becomes a production singleton: **fork the `install-*` repo into a `host-*` repo** and grow the production layer on top of the copy. This matters because production must be a closed, pinned system — it must not silently inherit factory churn.
+
+Migrate when a service is headed for a blessed `-00` singleton and the repo needs things the factory must never carry: backup schedules and off-host pushes, production sizing, a clone script. Until then, `-01`/`-02` iterations keep running from the `install-*` repo.
+
+Worked examples: `host-openbao` (forked from `install-openbao`) and `host-idempiere` (forked from `install-idempiere`).
+
+1. [ ] Copy and re-init: `cp -r install-openbao host-openbao && rm -rf host-openbao/.git`, then `git init`, first commit, new private `oeig-io` repo
+2. [ ] Record **Fork Provenance** in the README (source repo + commit) — the fork is *pinned*: factory changes are deliberate, reviewed ports, diffed against that commit (never a blind merge)
+3. [ ] Make it self-referential: add a `launch.conf` in the repo with `INSTALLER_REPO="../host-openbao"`, a full-word `PREFIX`, and production sizing
+4. [ ] Add `nix-modules.conf` + `nix-modules.sh` (copy from any `host-*` repo) so `install.sh`, the deploy script, and `clone.sh` share one module manifest — every `.nix` must be classified `keep` / `clone-remove` / `library`, and each script refuses to run while one is unclassified
+5. [ ] Add the production-only modules, split along the clone boundary (see "Give Every Payload Timer a Clone Buffer" above): capability `keep`, schedule `*-timer.nix` `clone-remove`, off-host push `clone-remove`
+6. [ ] Author `clone.sh` against the `incus-instance-clone` skill (Step 6 above)
+7. [ ] On blessing `-00`: enable delete protection (Step 5 above)
+
+> 💡 **Tip** — The copy *is* the point, not a shortcut around writing a fresh repo: a `host-*` payload is self-contained by definition, so the fork starts from a known-good, fully exercised installer and diverges deliberately from there.
 
 ## Config File Reference
 
