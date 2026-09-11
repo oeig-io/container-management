@@ -109,6 +109,7 @@ Each installer repo must provide:
 - `install.sh` — Takes no arguments, runs inside the container
 - Assumes NixOS base system
 - Handles all application-specific setup
+- Disables IPv6 temporary addresses in its prerequisites `.nix` — NixOS enables them by default and re-asserts that at every boot, overriding the host profile; see the `incus-environment-management-task` skill
 
 For `host-*` repos, `install.sh` should additionally:
 - `test -f <SECRETS_TARGET>` as its first step (fail fast if the secrets courier step was skipped)

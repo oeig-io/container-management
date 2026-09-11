@@ -68,6 +68,7 @@ This system implements **two complementary standards** that work together:
 | Base OS | NixOS with systemd |
 | Phases | 1-N: prerequisites → ansible (optional) → service → nginx (optional) |
 | Output | Running systemd service(s) |
+| Stable IPv6 | Prerequisites `.nix` disables IPv6 temporary addresses — NixOS enables them by default and re-asserts that at every boot, overriding the host profile; see the `incus-environment-management-task` skill |
 
 Both variants satisfy this contract. They differ in lifecycle model and whether the repo is a *closed* or *open* system.
 
