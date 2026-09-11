@@ -221,12 +221,14 @@ incus exec id-47 -- env SOME_VAR=value /opt/idempiere-install/install.sh
 
 ### Config Files
 
-Each container type has a config file in `configs/`:
+Each `install-*` container type has a config file in `configs/`. Discover them
+rather than consulting a list — the files *are* the inventory, and each one
+declares its own prefix and port base:
 
-| Config | Application | Naming | Port Range |
-|--------|-------------|--------|------------|
-| `idempiere.conf` | iDempiere ERP | `id-XX` | 9000-9099 |
-| `metabase.conf` | Metabase BI | `mb-XX` | 9100-9199 |
+```bash
+ls configs/*.conf                                           # available container types
+rg -N '^PREFIX=|^PORT_BASE=|^CONNECT_PORT=' configs/*.conf  # naming and ports for each
+```
 
 `host-*` repos (1:1 container-per-service) ship their own `launch.conf`
 alongside the installer and are invoked by path, e.g.
