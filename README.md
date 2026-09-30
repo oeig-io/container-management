@@ -14,13 +14,10 @@ Generic container lifecycle management for NixOS-based application deployments u
   - [Spin Up a Throwaway NixOS Container](#spin-up-a-throwaway-nixos-container)
   - [Create an iDempiere Container](#create-an-idempiere-container)
   - [Create a Metabase Container](#create-a-metabase-container)
-  - [Create a host-* Container With Secrets](#create-a-host--container-with-secrets)
+  - [Create a host-* Container](#create-a-host--container)
   - [Create Without Installing](#create-without-installing)
 - [Configuration](#configuration)
-- [Secrets (host-* containers)](#secrets-host--containers)
 - [Adding a New install-* Container Type](#adding-a-new-install--container-type)
-- [Adding a New host-* Container](#adding-a-new-host--container)
-- [Migrating an install-* Repo to host-*](#migrating-an-install--repo-to-host--)
 - [Config File Reference](#config-file-reference)
 
 ## Summary
@@ -44,7 +41,7 @@ This system implements **two complementary standards** that work together:
 │  │                                                               │   │
 │  │  • install.sh entry point                                    │   │
 │  │  • NixOS modules + sudo nixos-rebuild switch                 │   │
-│  │  • --secrets channel for open systems (host-*)               │   │
+│  │  • host-* contract: host-contract.md                         │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                     │
 │  • launch.sh orchestration                                         │
@@ -91,21 +88,9 @@ A single repo that can be deployed to any number of independent containers. The 
 
 #### Variant B: host-* (dedicated, 1:1)
 
-A repo that owns a single long-lived container identity. The repo is an **open system** by definition — it has inputs (API keys, licensed artifacts) that cannot live in the repo and must enter from outside at bootstrap.
+A repo that owns a single long-lived container identity. The repo is an **open system** by definition — it has inputs (API keys, licensed artifacts) that cannot live in the repo and must enter from outside. Its container carries its own vault identity and is changed after first boot by the repo's `deploy.sh`.
 
-| Property | Value |
-|----------|-------|
-| Container naming | Full-word prefix (e.g., `elevenlabs-01`) — strangers must understand purpose from `incus list` |
-| Config file location | Inside the `host-*` repo (e.g., `host-elevenlabs/launch.conf`) — the repo is self-contained |
-| `INSTALL_PATH` convention | `/opt/<name>/` — unified path; the repo **is** the runtime |
-| Secrets at bootstrap | Couriered via `launch.sh --secrets` to `SECRETS_TARGET` |
-| Ownership invariant | `launch.sh` enforces `root:root` on `INSTALL_PATH` post-push (see [Standard 2](#standard-2-container-orchestration), step 4) |
-| Clone script | `clone.sh` in the repo root, written and audited against the `incus-instance-clone` skill — see [Step 6](#step-6-author-the-clone-script) |
-
-**Examples**:
-- [github.com/oeig-io/host-elevenlabs](https://github.com/oeig-io/host-elevenlabs) — ElevenLabs → iDempiere + Zulip sync; first `host-*` repo
-
-> 📝 **Note** — Short legacy container names (`id-01`, `mb-01`, `npm-01`) are grandfathered. New `host-*` repos use full-word prefixes so a stranger reading `incus list` cold can tell what each box does.
+**[host-contract.md](host-contract.md) governs every `host-*` repo** — layout, vault identity, `deploy.sh`, delete protection, clone script, and migration from `install-*`. Start there to build or change one.
 
 ### Standard 2: Container Orchestration
 
@@ -128,7 +113,7 @@ A repo that owns a single long-lived container identity. The repo is an **open s
 2. Add proxy port forward (host port → container internal port) — skipped when `CONNECT_PORT=0` (outbound-only containers)
 3. Pre-seed downloads (if configured)
 4. Push installer repository to container, then `chown -R root:root $INSTALL_PATH` to normalize ownership (see [Ownership Note](#ownership-note) below)
-5. Push secrets file to container (only when `--secrets` is given; see [Secrets](#secrets-host--containers))
+5. Push the `--secrets` value to `SECRETS_TARGET` — piped on stdin for `host-*` (see [host-contract.md](host-contract.md))
 6. Execute `install.sh` (unless `--no-install`)
 7. Wait for health check
 
@@ -194,17 +179,14 @@ This creates container `mb-01` with:
 - **Resources**: 2GiB RAM, 2 CPUs, 10GiB disk
 - **Access**: http://<host>:9101/
 
-### Create a host-* Container With Secrets
-
-`host-*` repos need out-of-repo credentials at first boot. Pass `--secrets <path>` and `launch.sh` couriers the file to `SECRETS_TARGET` (declared in the config) with mode `0600 root:root`, **before** `install.sh` runs:
+### Create a host-* Container
 
 ```bash
-cd container-management
-./launch.sh ../host-elevenlabs/launch.conf elevenlabs-01 \
-    --secrets ~/.config/oeig/host-elevenlabs.env
+../host-openbao/scripts/bao-mint-login-token.sh myname-service \
+    | ./launch.sh ../host-myname/launch.conf myname-01 --secrets -
 ```
 
-Note that the config file lives inside the `host-*` repo itself, not in `configs/`. See [Secrets (host-* containers)](#secrets-host--containers) for the full contract and [Adding a New host-* Container](#adding-a-new-host--container) for the repo template.
+The config file lives inside the `host-*` repo itself, not in `configs/`, and the piped secret is the container's own vault token. See [host-contract.md](host-contract.md) → "Container Vault Identity".
 
 ### Create Without Installing
 
@@ -232,8 +214,8 @@ rg -N '^PREFIX=|^PORT_BASE=|^CONNECT_PORT=' configs/*.conf  # naming and ports f
 ```
 
 `host-*` repos (1:1 container-per-service) ship their own `launch.conf`
-alongside the installer and are invoked by path, e.g.
-`./launch.sh ../host-elevenlabs/launch.conf elevenlabs-01 --secrets <path>`.
+alongside the installer and are invoked by path — see
+[host-contract.md](host-contract.md).
 
 ### Container Naming Convention
 
@@ -312,186 +294,6 @@ HEALTH_INTERVAL=5
 ./launch.sh configs/myapp.conf ma-47   # any number of instances
 ```
 
-## Adding a New host-* Container
-
-For a **1:1 dedicated** pattern (single long-lived container identity with out-of-repo inputs).
-
-### Step 1: Create the host-* Repo
-
-Create `host-<name>/` at the workspace root following [Variant B](#variant-b-host--dedicated-11). Seed from the most recent `host-*` repo (e.g., `host-elevenlabs`) rather than from `install-*`, so you inherit the host-specific documentation structure (`docs/deploy.md`, `docs/secrets.md`, etc.).
-
-```
-host-myname/
-├── README.md                   # Concepts + quick start + links
-├── CLAUDE.md                   # AI-agent guidance
-├── launch.conf                 # Container config (lives HERE, not in configs/)
-├── install.sh                  # Prereq check + wire .nix + nixos-rebuild
-├── clone.sh                    # Clone into a distinct machine (see Step 6)
-├── nix-modules.conf            # Manifest: every .nix and its clone disposition
-├── myname-prerequisites.nix    # Base packages
-├── myname-service.nix          # Service user, systemd unit, tmpfiles
-├── bin/                        # Runtime code (Python, scripts, etc.)
-├── ansible/
-│   ├── secrets-courier.yml     # Steady-state secrets rotation (reference for CI/CD)
-│   └── inventory.ini
-├── config/.env.example         # Secrets template
-└── docs/
-    ├── deploy.md               # Filesystem contract, bootstrap, CI/CD
-    └── secrets.md              # Secrets lifecycle
-```
-
-### Step 2: Author `launch.conf` Inside the host-* Repo
-
-```bash
-# host-myname/launch.conf
-
-PREFIX="myname"                 # full word, not abbreviation
-PORT_BASE=0                     # 0 = outbound-only (no inbound proxy)
-CONNECT_PORT=0
-MEMORY="2GB"                    # bump if nixos-rebuild OOMs
-CPU="1"
-DISK="5GB"
-
-INSTALLER_REPO="../host-myname"
-INSTALL_PATH="/opt/myname"      # unified — repo IS the runtime
-
-SECRETS_TARGET="/var/lib/myname/env"   # required if using --secrets
-```
-
-### Step 3: Prepare the Local Secrets File
-
-Copy `host-myname/config/.env.example` to the canonical local path and fill in real values:
-
-```
-~/.config/oeig/host-myname.env
-```
-
-### Step 4: Deploy
-
-```bash
-cd container-management
-./launch.sh ../host-myname/launch.conf myname-01 \
-    --secrets ~/.config/oeig/host-myname.env
-```
-
-> 💡 **Tip** — Iterate `myname-01`, `-02`, `-03` until the repo is right (delete and relaunch freely). Bless `myname-00` only after two consecutive clean launches. See the planning doc for the `host-elevenlabs` repo for the iteration discipline.
-
-### Step 5: Enable Delete Protection on the Production Singleton
-
-**A blessed `host-*` production singleton (`myname-00`) must have incus
-delete/termination protection enabled.** This is important because a `host-*`
-`-00` container is a long-lived, one-of-a-kind production identity — unlike the
-throwaway `-01`/`-02` iterations, losing it means losing production. Incus
-`security.protection.delete` makes `incus delete` fail closed until the flag is
-deliberately cleared, so no reflex or scripted deletion can wipe production.
-
-Enable it the moment you bless `-00` (and only on `-00`, never on the disposable
-iterations):
-
-```bash
-incus config set myname-00 security.protection.delete=true
-```
-
-Verify:
-
-```bash
-incus config get myname-00 security.protection.delete   # -> true
-```
-
-Deleting a protected singleton is therefore a two-step, deliberate act — clear
-the flag first, then delete:
-
-```bash
-incus config set myname-00 security.protection.delete=false
-incus delete myname-00
-```
-
-> ⚠️ **Warning** — This is a mandatory step of blessing `-00`, not optional
-> hardening. Audit it periodically: every `*-00` `host-*` container should
-> report `security.protection.delete=true`. The flag belongs to the singleton
-> **only** — a clone that wears it cannot be rolled back or reaped, and clearing
-> it routinely on clones is what eventually gets it cleared on production. Clone
-> scripts set it `false` explicitly rather than inheriting it.
-
-### Step 6: Author the Clone Script
-
-**A `host-*` repo ships a `clone.sh`, and the `incus-instance-clone` skill is its
-specification.** This is important because a long-lived singleton accumulates
-things a generic copy cannot know about — an application-level production flag,
-a licensed artifact, a credential that writes to a shared destination. Only this
-repo knows that list, so the clone script is part of the payload contract, not an
-afterthought someone improvises later under pressure.
-
-Write it against that skill's **Clone Script Checklist**, which covers the three
-phases a clone must pass (machine identity, egress authority, application
-sanitization), the all-or-nothing failure contract, and the verification that
-gates it. `host-idempiere/clone.sh` is the worked example.
-
-Two obligations outlive the first draft:
-
-- **Re-run the checklist whenever the payload changes.** A new `.nix` module, a
-  new credential, or a new outbound integration can invalidate a clone script
-  that still reports success. Say so in the repo's `CLAUDE.md`.
-- **Make the drift mechanical where you can.** Classify every `.nix` in one
-  manifest and have `install.sh`, the deploy script, and `clone.sh` all read it,
-  so an unclassified module fails the run instead of shipping in a clone. See
-  `host-idempiere/nix-modules.conf`.
-
-Compose the payload so a clone is defined by what its config **omits**: keep a
-scheduled unit's timer in its own module so a clone can delete the schedule and
-keep the capability. The skill's "Subtract, Never Shadow" section explains why an
-override module is the wrong instinct.
-
-#### Give Every Payload Timer a Clone Buffer
-
-**A timer in a `host-*`/`install-*` payload must not be able to fire during a
-clone's first boot. Set `OnBootSec` to at least 15 minutes.**
-
-This is important because subtracting a timer's module removes its *declaration*,
-not the unit. NixOS boots the generation the **source** built, and
-`configuration.nix` is only input to a rebuild — so a subtracted timer is live
-from the clone's first boot until the clone script's `nixos-rebuild switch` tears
-it down. A timer that elapses inside that gap runs on a machine holding
-production's credentials that nothing has sanitized yet.
-
-The buffer has to be generous because there is no way to boot a container without
-timers: the mechanisms that would do it (`systemd.mask=` on the kernel command
-line, an offline `/dev/null` mask under `/etc/systemd/system`) are unavailable to
-a container or blocked by read-only Nix-rendered `/etc`. A clone script needs a
-few minutes to settle the boot and disarm; 15 minutes leaves headroom for a slow
-boot and for someone cloning by hand.
-
-Two companions to get right at the same time:
-
-- **`Persistent=` only works with `OnCalendar=`.** On a monotonic timer
-  (`OnUnitActiveSec=`) it is inert, so do not use it to promise catch-up after
-  downtime — switch the cadence to `OnCalendar=` if catch-up is what you want.
-  Note that `OnCalendar=` **plus** `Persistent=true` fires *immediately* on boot
-  when a run was missed, which defeats the buffer: pair it with
-  `RandomizedDelaySec=` past the window, or accept that the clone script's
-  disarm is the only guard.
-- **Never shorten the buffer to make a job start sooner.** A job that must run at
-  boot is a job that has no buffer; give it a `ConditionPathExists=` or an
-  environment gate instead, so a clone can decline it.
-
-## Migrating an install-* Repo to host-*
-
-The purpose of this section is to define how a factory payload becomes a production singleton: **fork the `install-*` repo into a `host-*` repo** and grow the production layer on top of the copy. This matters because production must be a closed, pinned system — it must not silently inherit factory churn.
-
-Migrate when a service is headed for a blessed `-00` singleton and the repo needs things the factory must never carry: backup schedules and off-host pushes, production sizing, a clone script. Until then, `-01`/`-02` iterations keep running from the `install-*` repo.
-
-Worked examples: `host-openbao` (forked from `install-openbao`) and `host-idempiere` (forked from `install-idempiere`).
-
-1. [ ] Copy and re-init: `cp -r install-openbao host-openbao && rm -rf host-openbao/.git`, then `git init`, first commit, new private `oeig-io` repo
-2. [ ] Record **Fork Provenance** in the README (source repo + commit) — the fork is *pinned*: factory changes are deliberate, reviewed ports, diffed against that commit (never a blind merge)
-3. [ ] Make it self-referential: add a `launch.conf` in the repo with `INSTALLER_REPO="../host-openbao"`, a full-word `PREFIX`, and production sizing
-4. [ ] Add `nix-modules.conf` + `nix-modules.sh` (copy from any `host-*` repo) so `install.sh`, the deploy script, and `clone.sh` share one module manifest — every `.nix` must be classified `keep` / `clone-remove` / `library`, and each script refuses to run while one is unclassified
-5. [ ] Add the production-only modules, split along the clone boundary (see "Give Every Payload Timer a Clone Buffer" above): capability `keep`, schedule `*-timer.nix` `clone-remove`, off-host push `clone-remove`
-6. [ ] Author `clone.sh` against the `incus-instance-clone` skill (Step 6 above)
-7. [ ] On blessing `-00`: enable delete protection (Step 5 above)
-
-> 💡 **Tip** — The copy *is* the point, not a shortcut around writing a fresh repo: a `host-*` payload is self-contained by definition, so the fork starts from a known-good, fully exercised installer and diverges deliberately from there.
-
 ## Config File Reference
 
 Required variables in config files:
@@ -517,50 +319,8 @@ Optional variables:
 |----------|-------------|---------|
 | `SEED_DIR` | Pre-seed directory inside container | `"/opt/app-seed"` |
 | `SEED_FILE` | Pre-seed filename (empty string to skip) | `"app.zip"`, `""` |
-| `SECRETS_TARGET` | Absolute path inside container where `--secrets` file lands (`0600 root:root`). Required **only** when `--secrets` is passed on the CLI. | `"/var/lib/elevenlabs/env"` |
+| `SECRETS_TARGET` | Absolute path inside the container where the `--secrets` value lands (`0600 root:root`); `host-*` only — see [host-contract.md](host-contract.md) | `"/var/lib/<app>/openbao-token"` |
 | `NIXOS_IMAGE` | Full incus image reference to launch from | `"images:nixos/26.05"`, `"images:nixos/unstable"`, or a local alias/fingerprint for cached images |
-
-## Secrets (host-* containers)
-
-`host-*` repos are **open systems** — they have inputs (API keys, passwords) that cannot live in the repo. `launch.sh --secrets <path>` is the bootstrap courier for those inputs.
-
-### CLI flag
-
-```
-./launch.sh <config-file> <container-name> --secrets <local-path>
-```
-
-- `<local-path>` is a file on the operator's machine (leading `~` is expanded).
-- Missing file → fail fast, no container is created beyond that point.
-
-### Config variable
-
-The config file declares **where** on the container the secrets land:
-
-```bash
-# host-elevenlabs/launch.conf
-SECRETS_TARGET="/var/lib/elevenlabs/env"
-```
-
-- Absolute path.
-- Required only when the operator passes `--secrets`. `install-*` configs should **not** set it.
-
-### What `launch.sh` does
-
-1. Resolves and validates `<local-path>` before creating the container.
-2. After pushing the repo, creates `$(dirname SECRETS_TARGET)` on the container as `0711 root:root` (parent must be traversable by the eventual service user so systemd can reach state directories inside it; the secrets file itself stays `0600`).
-3. Pushes the file to `SECRETS_TARGET` with `--mode=0600 --uid=0 --gid=0`.
-4. Proceeds to `install.sh` — which can now assume the secrets file exists (and should `test -f` it as its first prereq check).
-
-### What `launch.sh` does **not** do
-
-- Does not read or parse the secrets file.
-- Does not rotate secrets on existing containers. Steady-state rotation is a separate channel (Ansible playbook in the `host-*` repo, or CI/CD). See the individual `host-*` repo's `docs/secrets.md`.
-- Does not create `SECRETS_TARGET` automatically for `install-*` configs — the flag is optional and silently skipped when not passed.
-
-### Why this exists
-
-`install-*` repos are closed systems: push repo, run `install.sh`, done. `host-*` repos are open by definition — secrets must enter from outside the repo. Rather than force a separate Ansible bootstrap step, `launch.sh` gains one generic extra channel (`--secrets`) so the operator experience stays one-shot. Future out-of-repo artifacts (e.g., licensed binaries) would follow the same pattern with a new flag; deferred until concretely needed.
 
 ## Prerequisites
 
@@ -570,6 +330,7 @@ SECRETS_TARGET="/var/lib/elevenlabs/env"
 
 ## Related Documentation
 
+- [host-contract.md](host-contract.md) — The `host-*` contract
 - [CLAUDE.md](CLAUDE.md) — Technical details for Claude Code
 - [github.com/oeig-io/install-idempiere](https://github.com/oeig-io/install-idempiere) — install-* example (complex)
 - [github.com/oeig-io/install-metabase](https://github.com/oeig-io/install-metabase) — install-* example (complex)

@@ -16,7 +16,7 @@ The system uses a config-driven approach:
 2. **Launch script** (`launch.sh`) — Generic container lifecycle manager; accepts either config location
 3. **Application payload repos** (external) — Two variants:
    - `install-*` — closed systems, no out-of-repo inputs
-   - `host-*` — open systems, secrets couriered via `--secrets`
+   - `host-*` — open systems governed by `host-contract.md`: their own vault token piped to `launch.sh --secrets -`, every later change through the repo's `deploy.sh`
 
 ## Key Commands
 
@@ -30,9 +30,10 @@ The system uses a config-driven approach:
 # Create without installing (for manual install with env vars)
 ./launch.sh configs/idempiere.conf id-47 --no-install
 
-# Create a host-* container and courier secrets in one shot
-./launch.sh ../host-elevenlabs/launch.conf elevenlabs-01 \
-    --secrets ~/.config/oeig/host-elevenlabs.env
+# Create a host-* container; the piped secret is its own vault token
+bao login -method=userpass username=<admin>
+../host-openbao/scripts/bao-mint-login-token.sh myname-service \
+    | ./launch.sh ../host-myname/launch.conf myname-01 --secrets -
 ```
 
 ## File Structure
@@ -46,6 +47,7 @@ container-management/
 │   ├── npm.conf           # npm prerequisites config (install-*)
 │   └── opencode.conf      # opencode config (install-*)
 ├── README.md              # User documentation
+├── host-contract.md       # The host-* contract (governs every host-* repo)
 └── CLAUDE.md              # This file
 ```
 
@@ -67,31 +69,18 @@ Optional variables:
 
 - `SEED_DIR`, `SEED_FILE` - Pre-seed a file into the container before install
 - `NIXOS_IMAGE` - Override base image as a full incus image reference (default `images:nixos/26.05`). Use `images:nixos/...` for remote, or a local alias/fingerprint for cached images.
-- `SECRETS_TARGET` - Absolute path on container where `--secrets <path>`
-  couriers a local secrets file (0600 root:root). Required **only** when
-  `--secrets` is passed; `install-*` configs should not set it.
+- `SECRETS_TARGET` - where `--secrets` lands in a host-* container; see
+  `host-contract.md`. `install-*` configs do not set it.
 
-## `--secrets` (host-* containers)
+## `--secrets`
 
-`host-*` repos are open systems: they need out-of-repo credentials at first
-boot. `launch.sh` accepts `--secrets <path>` as a generic bootstrap channel.
-
-Order of operations when `--secrets` is given:
-
-1. Validate the source file exists (fail fast, before creating the container)
-2. Validate `SECRETS_TARGET` is set in the config file
-3. Create container, proxy (if any), pre-seed, push repo (steps 1–4)
-4. `mkdir -p $(dirname SECRETS_TARGET)` as `0700 root:root`
-5. `incus file push --mode=0600 --uid=0 --gid=0 <src> <container><SECRETS_TARGET>`
-6. Run `install.sh` — which should `test -f SECRETS_TARGET` as a prereq
-
-When `--secrets` is not passed, step 5 is skipped silently; existing
-`install-*` configs are unaffected.
-
-`launch.sh` is a **courier only** — it never reads or transforms the secrets
-file. Steady-state rotation is a separate channel (Ansible in the `host-*`
-repo, or CI/CD). See `corporate/planning/host-elevenlabs/README.md` for the
-design.
+`launch.sh --secrets -` reads one secret from stdin **before any `incus`
+call** (`incus exec` reads stdin too and would swallow it), and pushes it to
+`SECRETS_TARGET` as `0600 root:root` under a `0711 root:root` parent after the
+repo push and before `install.sh`. `--secrets <path>` is the legacy local-file
+form. `launch.sh` is a courier only: it never parses the secret, and it never
+touches a container after first boot — that is the host-* repo's `deploy.sh`.
+The contract is `host-contract.md`.
 
 ## Port Conventions
 
@@ -111,10 +100,8 @@ Each installer repo must provide:
 - Handles all application-specific setup
 - Disables IPv6 temporary addresses in its prerequisites `.nix` — NixOS enables them by default and re-asserts that at every boot, overriding the host profile; see the `incus-environment-management-task` skill
 
-For `host-*` repos, `install.sh` should additionally:
-- `test -f <SECRETS_TARGET>` as its first step (fail fast if the secrets courier step was skipped)
-- Wire its `.nix` modules into `/etc/nixos/configuration.nix` via idempotent `grep -q` + `sed`
-- End with `sudo nixos-rebuild switch` (always use `sudo`, even when running as root)
+For `host-*` repos, `install.sh` has additional duties — see `host-contract.md`
+→ "Repo Layout".
 
 ## Common Operations
 
@@ -124,12 +111,8 @@ incus delete id-47 --force
 ./launch.sh configs/idempiere.conf id-47
 ```
 
-**Delete and recreate a host-* container (iteration workflow):**
-```bash
-incus delete elevenlabs-01 --force
-./launch.sh ../host-elevenlabs/launch.conf elevenlabs-01 \
-    --secrets ~/.config/oeig/host-elevenlabs.env
-```
+**Delete and recreate a host-* container (iteration workflow; confirm first):**
+see `host-contract.md` → "Lifecycle".
 
 **Manual install with environment variables:**
 ```bash

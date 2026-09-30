@@ -11,29 +11,34 @@
 # Options:
 #   --no-install        Stop after pushing repo and secrets (before install.sh).
 #                       Useful for manual install with special flags.
-#   --secrets <path>    Push a local secrets file to the container at
-#                       SECRETS_TARGET (defined in config) with mode 0600
-#                       root:root. Required for host-* containers whose
-#                       services need out-of-repo credentials at first boot.
+#   --secrets <path|->  Push a secret to the container at SECRETS_TARGET
+#                       (defined in config) with mode 0600 root:root.
+#                       `-` reads it from stdin - the host-* standard, piped
+#                       from a mint and never stored (host-contract.md ->
+#                       "Container Vault Identity"). A path is the legacy
+#                       local-file channel.
 #
 # This script creates a fresh container:
 #   1. Creates NixOS container with incus
 #   2. Adds proxy port forward (based on config; skipped when CONNECT_PORT=0)
 #   3. Pre-seeds download (if configured)
 #   4. Pushes installer repo to container
-#   5. Pushes secrets to container (if --secrets given)
+#   5. Pushes the secret to SECRETS_TARGET (--secrets)
 #   6. Runs install.sh (unless --no-install)
 #   7. Waits for health check
 #
 # Prerequisites:
 #   - incus installed and configured
 #   - Installer repo exists at INSTALLER_REPO path
-#   - When using --secrets: SECRETS_TARGET set in config; source file readable
+#   - When using --secrets: SECRETS_TARGET set in config; source file readable,
+#     or stdin a pipe (not a terminal) for `-`
 #
 # Examples:
 #   ./launch.sh configs/idempiere.conf id-47
 #   ./launch.sh configs/metabase.conf mb-01
 #   ./launch.sh configs/idempiere.conf id-47 --no-install
+#   ../host-openbao/scripts/bao-mint-login-token.sh myname-service \
+#       | ./launch.sh ../host-myname/launch.conf myname-01 --secrets -
 #   ./launch.sh ../host-elevenlabs/launch.conf elevenlabs-01 \
 #       --secrets ~/.config/oeig/host-elevenlabs.env
 
@@ -43,7 +48,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Parse arguments
 if [[ $# -lt 2 || "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: $0 <config-file> <container-name> [--no-install] [--secrets <path>]"
+    echo "Usage: $0 <config-file> <container-name> [--no-install] [--secrets <path|->]"
     echo ""
     echo "Arguments:"
     echo "  config-file         Config file (e.g., configs/idempiere.conf)"
@@ -51,11 +56,13 @@ if [[ $# -lt 2 || "$1" == "--help" || "$1" == "-h" ]]; then
     echo ""
     echo "Options:"
     echo "  --no-install        Stop before install.sh (for manual install)"
-    echo "  --secrets <path>    Push local secrets file to SECRETS_TARGET (0600 root:root)"
+    echo "  --secrets <path|->  Push a secret to SECRETS_TARGET (0600 root:root);"
+    echo "                      '-' reads it from stdin (the host-* standard)"
     echo ""
     echo "Examples:"
     echo "  $0 configs/idempiere.conf id-47"
     echo "  $0 configs/metabase.conf mb-01"
+    echo "  <mint> | $0 ../host-myname/launch.conf myname-01 --secrets -"
     echo "  $0 ../host-elevenlabs/launch.conf elevenlabs-01 --secrets ~/.config/oeig/host-elevenlabs.env"
     exit 0
 fi
@@ -87,8 +94,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate secrets source path (before loading config, to fail fast)
-if [[ -n "$SECRETS_SOURCE" ]]; then
+# Read or validate the secret source before loading config, to fail fast.
+# Stdin is read HERE, before any incus call: `incus exec` reads stdin too, and
+# the first one would silently swallow a piped secret. The value is held in
+# memory only and never printed.
+SECRETS_VALUE=""
+if [[ "$SECRETS_SOURCE" == "-" ]]; then
+    if [[ -t 0 ]]; then
+        echo "ERROR: --secrets - reads a piped secret, but stdin is a terminal"
+        exit 1
+    fi
+    SECRETS_VALUE="$(cat)"
+    if [[ -z "$SECRETS_VALUE" ]]; then
+        echo "ERROR: --secrets - received an empty secret on stdin"
+        exit 1
+    fi
+elif [[ -n "$SECRETS_SOURCE" ]]; then
     # Expand leading ~ if the shell didn't
     SECRETS_SOURCE="${SECRETS_SOURCE/#\~/$HOME}"
     if [[ ! -f "$SECRETS_SOURCE" ]]; then
@@ -119,6 +140,11 @@ if [[ -n "$SECRETS_SOURCE" && -z "${SECRETS_TARGET:-}" ]]; then
     exit 1
 fi
 
+if [[ -n "$SECRETS_SOURCE" && "${SECRETS_TARGET}" != /* ]]; then
+    echo "ERROR: SECRETS_TARGET must be an absolute path in $CONFIG_FILE"
+    exit 1
+fi
+
 # Validate container name matches prefix
 if [[ ! "$CONTAINER" =~ ^${PREFIX}-[0-9]+$ ]]; then
     echo "ERROR: Container name must be in format ${PREFIX}-XX (e.g., ${PREFIX}-47)"
@@ -143,7 +169,9 @@ echo "Container: $CONTAINER"
 echo "Port:      $PROXY_PORT -> $CONNECT_PORT"
 echo "Resources: $MEMORY RAM, $CPU CPUs, $DISK disk"
 echo "Installer: $INSTALLER_REPO_PATH"
-if [[ -n "$SECRETS_SOURCE" ]]; then
+if [[ "$SECRETS_SOURCE" == "-" ]]; then
+    echo "Secrets:   stdin -> $SECRETS_TARGET"
+elif [[ -n "$SECRETS_SOURCE" ]]; then
     echo "Secrets:   $SECRETS_SOURCE -> $SECRETS_TARGET"
 fi
 echo ""
@@ -204,19 +232,29 @@ incus exec "$CONTAINER" -- chown -R root:root "$INSTALL_PATH"
 echo "    Repo pushed to $INSTALL_PATH/ (owned by root:root)"
 echo ""
 
-# Step 5: Push secrets (if --secrets given)
-if [[ -n "$SECRETS_SOURCE" ]]; then
+# Step 5: Push the secret to SECRETS_TARGET (--secrets)
+# The parent dir is 0711 root:root: traversable by the eventual service user so
+# systemd can reach state dirs inside, not listable. The secret is 0600.
+if [[ -n "$SECRETS_VALUE" || -n "$SECRETS_SOURCE" ]]; then
     echo ">>> Step 5: Pushing secrets..."
     SECRETS_PARENT="$(dirname "$SECRETS_TARGET")"
     incus exec "$CONTAINER" -- mkdir -p "$SECRETS_PARENT"
     incus exec "$CONTAINER" -- chown root:root "$SECRETS_PARENT"
     incus exec "$CONTAINER" -- chmod 0711 "$SECRETS_PARENT"
-    incus file push --mode=0600 --uid=0 --gid=0 -q \
-        "$SECRETS_SOURCE" "$CONTAINER$SECRETS_TARGET"
-    echo "    Secrets pushed to $SECRETS_TARGET (0600 root:root)"
+    if [[ -n "$SECRETS_VALUE" ]]; then
+        # printf is a builtin: the value reaches incus over stdin, never argv.
+        printf '%s' "$SECRETS_VALUE" \
+            | incus file push --mode=0600 --uid=0 --gid=0 -q - "$CONTAINER$SECRETS_TARGET"
+        SECRETS_VALUE=""
+        echo "    Piped secret pushed to $SECRETS_TARGET (0600 root:root)"
+    else
+        incus file push --mode=0600 --uid=0 --gid=0 -q \
+            "$SECRETS_SOURCE" "$CONTAINER$SECRETS_TARGET"
+        echo "    Secrets pushed to $SECRETS_TARGET (0600 root:root)"
+    fi
     echo ""
 else
-    echo ">>> Step 5: Skipped (no --secrets provided)"
+    echo ">>> Step 5: Skipped (no secrets configured)"
     echo ""
 fi
 
