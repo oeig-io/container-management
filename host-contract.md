@@ -2,7 +2,7 @@
 
 The purpose of this document is to govern how a `host-*` repo and its container are built, launched, changed, and copied, so that "look at container-management and build me a host-…" has exactly one answer. This is important because a `host-*` container is a one-of-a-kind production identity whose credentials live outside its repo — when every `host-*` repo follows the same contract, anyone who can operate one can launch, redeploy, rotate, and clone them all.
 
-The `install-*` factory variant and the orchestration standard that both variants share are in [README.md](README.md).
+How `host-*` relates to the `install-*` factory, and the orchestration standard both share, are in [README.md](README.md) → "Two Payload Variants"; the factory itself is [install-contract.md](install-contract.md).
 
 ## TOC
 
@@ -264,7 +264,7 @@ Two companions to get right at the same time:
 
 The purpose of this section is to define how a factory payload becomes a production singleton: **fork the `install-*` repo into a `host-*` repo** and grow the production layer on top of the copy. This matters because production must be a closed, pinned system — it must not silently inherit factory churn.
 
-Migrate when a service is headed for a blessed `-00` singleton and the repo needs things the factory must never carry: backup schedules and off-host pushes, production sizing, a clone script. Until then, `-01`/`-02` iterations keep running from the `install-*` repo.
+Migrate when any signal in [install-contract.md](install-contract.md) → "When an install-* Becomes a host-*" holds. Until then, `-01`/`-02` iterations keep running from the `install-*` repo.
 
 Worked examples: `host-openbao` (forked from `install-openbao`) and `host-idempiere` (forked from `install-idempiere`).
 

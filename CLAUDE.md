@@ -15,7 +15,7 @@ The system uses a config-driven approach:
    - Inside each `host-*` repo as `launch.conf` — for `host-*` repos (1:1 dedicated pattern)
 2. **Launch script** (`launch.sh`) — Generic container lifecycle manager; accepts either config location
 3. **Application payload repos** (external) — Two variants:
-   - `install-*` — closed systems, no out-of-repo inputs
+   - `install-*` — closed systems governed by `install-contract.md`: no out-of-repo inputs, changed by delete and relaunch
    - `host-*` — open systems governed by `host-contract.md`: their own vault token piped to `launch.sh --secrets -`, every later change through the repo's `deploy.sh`
 
 ## Key Commands
@@ -47,6 +47,7 @@ container-management/
 │   ├── npm.conf           # npm prerequisites config (install-*)
 │   └── opencode.conf      # opencode config (install-*)
 ├── README.md              # User documentation
+├── install-contract.md    # The install-* contract (governs every install-* repo)
 ├── host-contract.md       # The host-* contract (governs every host-* repo)
 └── CLAUDE.md              # This file
 ```
@@ -84,24 +85,17 @@ The contract is `host-contract.md`.
 
 ## Port Conventions
 
-| Type | Pattern | Prefix | Port Range | Example |
-|------|---------|--------|------------|---------|
-| iDempiere | install-* | id- | 9000-9099 | id-47 -> 9047 |
-| Metabase | install-* | mb- | 9100-9199 | mb-01 -> 9101 |
-| host-elevenlabs | host-* | elevenlabs- | n/a (outbound-only, `CONNECT_PORT=0`) | elevenlabs-01 |
-
-`host-*` containers commonly run with `PORT_BASE=0` / `CONNECT_PORT=0` because they do not expose an inbound service — they poll outward and push to other systems.
+Each `install-*` type owns a block of 100 host ports at `PORT_BASE` (host port
+= `PORT_BASE` + instance number). Discover the blocks in use rather than
+keeping a list: `rg -N '^PREFIX=|^PORT_BASE=' configs/*.conf`. `host-*`
+containers commonly run with `PORT_BASE=0` / `CONNECT_PORT=0` because they do
+not expose an inbound service — they poll outward and push to other systems.
 
 ## Installer Contract
 
-Each installer repo must provide:
-- `install.sh` — Takes no arguments, runs inside the container
-- Assumes NixOS base system
-- Handles all application-specific setup
-- Disables IPv6 temporary addresses in its prerequisites `.nix` — NixOS enables them by default and re-asserts that at every boot, overriding the host profile; see the `incus-environment-management-task` skill
-
-For `host-*` repos, `install.sh` has additional duties — see `host-contract.md`
-→ "Repo Layout".
+Every payload repo satisfies README.md → "Standard 1: Application Payload".
+What `install.sh` does beyond that is in `install-contract.md` → "install.sh"
+and `host-contract.md` → "Repo Layout".
 
 ## Common Operations
 

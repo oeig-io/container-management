@@ -7,8 +7,7 @@ Generic container lifecycle management for NixOS-based application deployments u
 - [Summary](#summary)
 - [Standards Overview](#standards-overview)
   - [Standard 1: Application Payload](#standard-1-application-payload)
-    - [Variant A: install-* (factory, 1:N)](#variant-a-install--factory-1n)
-    - [Variant B: host-* (dedicated, 1:1)](#variant-b-host--dedicated-11)
+  - [Two Payload Variants](#two-payload-variants)
   - [Standard 2: Container Orchestration](#standard-2-container-orchestration)
 - [Quick Start](#quick-start)
   - [Spin Up a Throwaway NixOS Container](#spin-up-a-throwaway-nixos-container)
@@ -17,12 +16,15 @@ Generic container lifecycle management for NixOS-based application deployments u
   - [Create a host-* Container](#create-a-host--container)
   - [Create Without Installing](#create-without-installing)
 - [Configuration](#configuration)
-- [Adding a New install-* Container Type](#adding-a-new-install--container-type)
 - [Config File Reference](#config-file-reference)
+- [Prerequisites](#prerequisites)
+- [Related Documentation](#related-documentation)
 
 ## Summary
 
 The purpose of this system is to enable consistent, repeatable deployment of applications into isolated NixOS containers. This is important because it provides a unified approach to packaging applications (regardless of complexity) and orchestrating them at scale.
+
+To build a payload repo, start with its contract: [install-contract.md](install-contract.md) for an `install-*` factory, [host-contract.md](host-contract.md) for a `host-*` production singleton. [Two Payload Variants](#two-payload-variants) explains which one you need.
 
 ## Standards Overview
 
@@ -36,12 +38,12 @@ This system implements **two complementary standards** that work together:
 │  │  ┌────────────────────────────────────────────────────────┐   │   │
 │  │  │  Variant A: install-*   Variant B: host-*             │   │   │
 │  │  │  (factory, 1:N)         (dedicated, 1:1)              │   │   │
-│  │  │  id-47, mb-01           elevenlabs-01                 │   │   │
+│  │  │  id-47, mb-01           lead-helper-00                │   │   │
 │  │  └────────────────────────────────────────────────────────┘   │   │
 │  │                                                               │   │
 │  │  • install.sh entry point                                    │   │
 │  │  • NixOS modules + sudo nixos-rebuild switch                 │   │
-│  │  • host-* contract: host-contract.md                         │   │
+│  │  • install-contract.md, host-contract.md                     │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                     │
 │  • launch.sh orchestration                                         │
@@ -67,30 +69,23 @@ This system implements **two complementary standards** that work together:
 | Output | Running systemd service(s) |
 | Stable IPv6 | Prerequisites `.nix` disables IPv6 temporary addresses — NixOS enables them by default and re-asserts that at every boot, overriding the host profile; see the `incus-environment-management-task` skill |
 
-Both variants satisfy this contract. They differ in lifecycle model and whether the repo is a *closed* or *open* system.
+Both variants satisfy this contract.
 
-#### Variant A: install-* (factory, 1:N)
+### Two Payload Variants
 
-A single repo that can be deployed to any number of independent containers. The repo is a **closed system** — everything needed to deploy lives in it.
+The two variants differ in how many containers a repo serves, whether anything enters from outside, and what happens after first boot:
 
-| Property | Value |
-|----------|-------|
-| Container naming | `PREFIX-XX` (short abbreviation; e.g., `id-47`, `mb-01`) |
-| Config file location | `container-management/configs/<app>.conf` |
-| `INSTALL_PATH` convention | `/opt/<app>-install/` — throwaway bootstrap artifact |
-| Secrets at bootstrap | None (or internal to the application) |
-| Typical complexity | Multi-phase with Ansible when no good nixpkg exists; single-phase otherwise |
+| | `install-*` — factory | `host-*` — production singleton |
+|---|---|---|
+| Instances | 1:N, disposable (`id-47`, `mb-01`) | 1:1, one long-lived identity (`lead-helper-00`) |
+| System | **Closed** — nothing enters from outside the repo | **Open** — its own vault token is couriered in |
+| Config | `configs/<app>.conf`, in this repo | `launch.conf`, in the payload repo |
+| `INSTALL_PATH` | `/opt/<app>-install/` — throwaway | `/opt/<name>/` — the live runtime |
+| After first boot | Delete and relaunch | The repo's `deploy.sh` |
+| Also owns | — | Vault identity, `clone.sh`, delete protection on `-00` |
+| Governed by | [install-contract.md](install-contract.md) | [host-contract.md](host-contract.md) |
 
-**Examples**:
-- [github.com/oeig-io/install-idempiere](https://github.com/oeig-io/install-idempiere) — Complex: no nixpkg, multi-phase with Ansible
-- [github.com/oeig-io/install-metabase](https://github.com/oeig-io/install-metabase) — Complex: no nixpkg, multi-phase with Ansible
-- [github.com/oeig-io/install-opencode](https://github.com/oeig-io/install-opencode) — Simple: good nixpkg, single phase
-
-#### Variant B: host-* (dedicated, 1:1)
-
-A repo that owns a single long-lived container identity. The repo is an **open system** by definition — it has inputs (API keys, licensed artifacts) that cannot live in the repo and must enter from outside. Its container carries its own vault identity and is changed after first boot by the repo's `deploy.sh`.
-
-**[host-contract.md](host-contract.md) governs every `host-*` repo** — layout, vault identity, `deploy.sh`, delete protection, clone script, and migration from `install-*`. Start there to build or change one.
+**An `install-*` repo is the usual on-ramp.** It is where we learn to stand an application up on NixOS, cheaply and repeatably, with nothing depending on it. When the service needs an input from outside the repo or becomes a production singleton, its `install-*` repo is **forked** into a `host-*` repo — `host-idempiere` and `host-openbao` from their namesakes, `host-elevenlabs` from `install-npm`. The `install-*` repo keeps serving disposable boxes; the fork is pinned and grows the production layer. A service born as a singleton with outside inputs starts directly as a `host-*` (`host-lead-helper`).
 
 ### Standard 2: Container Orchestration
 
@@ -103,8 +98,8 @@ A repo that owns a single long-lived container identity. The repo is an **open s
 | Element | Requirement |
 |---------|-------------|
 | Client | Local Incus installation |
-| Config | `configs/<app>.conf` file defining container parameters |
-| Naming | `PREFIX-XX` format (e.g., `id-47`, `mb-01`) |
+| Config | `configs/<app>.conf` (`install-*`) or `launch.conf` in the payload repo (`host-*`) |
+| Naming | `PREFIX-NN` format (e.g., `id-47`, `lead-helper-00`) |
 | Ports | `PORT_BASE + container_number` (e.g., `9000 + 47 = 9047`) |
 | Launcher | `launch.sh <config> <container-name>` |
 
@@ -219,11 +214,7 @@ alongside the installer and are invoked by path — see
 
 ### Container Naming Convention
 
-Container names follow the pattern: `PREFIX-XX`
-
-- `PREFIX`: Short application identifier (e.g., `id`, `mb`, `oc`)
-- `XX`: Numeric instance identifier (01-99)
-- Examples: `id-47`, `mb-01`, `oc-01`
+`launch.sh` requires container names of the form `PREFIX-NN`, where `NN` is the instance number that also sets the host port. `install-*` prefixes are short (`id-47`); `host-*` prefixes are full words (`lead-helper-00`). Each contract's "Naming" section owns the rest.
 
 ### Port Allocation
 
@@ -234,65 +225,6 @@ Final port = `PORT_BASE` + container number
 | id-47 | 9000 | 9000 + 47 | 9047 |
 | id-01 | 9000 | 9000 + 1 | 9001 |
 | mb-01 | 9100 | 9100 + 1 | 9101 |
-
-## Adding a New install-* Container Type
-
-For a **1:N factory** pattern (multiple independent instances of the same app).
-
-### Step 1: Create the Application Installer Repo
-
-Create a new `install-<app>` repository following [Variant A](#variant-a-install--factory-1n):
-
-```
-install-myapp/
-├── install.sh              # Required: Entry point
-├── myapp-prerequisites.nix # Phase 1: System dependencies
-├── myapp-service.nix       # Phase 2: systemd service
-└── ansible/                # Optional: Complex apps only
-    ├── myapp-install.yml
-    └── vars/
-        └── myapp.yml
-```
-
-### Step 2: Create the Config File in `container-management/configs/`
-
-```bash
-# configs/myapp.conf
-
-# Container naming
-PREFIX="ma"
-
-# Port configuration
-PORT_BASE=9200
-CONNECT_PORT=8080
-
-# Resource limits
-MEMORY="2GiB"
-CPU=2
-DISK="10GiB"
-
-# Pre-seed (optional)
-SEED_DIR="/opt/myapp-seed"
-SEED_FILE=""  # Skip pre-seeding
-
-# Installation paths
-INSTALL_PATH="/opt/myapp-install"
-INSTALLER_REPO="../install-myapp"
-
-# Health check
-HEALTH_ENDPOINT="http://localhost:8080/health"
-HEALTH_EXPECTED=200
-HEALTH_TIMEOUT=60
-HEALTH_INTERVAL=5
-```
-
-### Step 3: Deploy
-
-```bash
-./launch.sh configs/myapp.conf ma-01
-./launch.sh configs/myapp.conf ma-02
-./launch.sh configs/myapp.conf ma-47   # any number of instances
-```
 
 ## Config File Reference
 
@@ -330,6 +262,7 @@ Optional variables:
 
 ## Related Documentation
 
+- [install-contract.md](install-contract.md) — The `install-*` contract
 - [host-contract.md](host-contract.md) — The `host-*` contract
 - [CLAUDE.md](CLAUDE.md) — Technical details for Claude Code
 - [github.com/oeig-io/install-idempiere](https://github.com/oeig-io/install-idempiere) — install-* example (complex)
