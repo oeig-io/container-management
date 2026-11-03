@@ -17,6 +17,7 @@ How `host-*` relates to the `install-*` factory, and the orchestration standard 
   - [Token Lifetime](#token-lifetime)
 - [Service Credentials](#service-credentials)
 - [deploy.sh](#deploysh)
+- [Deployed Commit](#deployed-commit)
 - [Building a New host-* Repo](#building-a-new-host--repo)
 - [Delete Protection on -00](#delete-protection-on--00)
 - [Clone Script](#clone-script)
@@ -51,6 +52,7 @@ The purpose of this section is to derive every name a `host-*` repo creates from
 | `PREFIX` | `<name>` | `lead-helper` | `launch.conf` |
 | Container | `<name>-NN`; `-00` is production | `lead-helper-00`, `lead-helper-01` | `launch.sh` |
 | Code on the container (`INSTALL_PATH`) | `/opt/<name>/` | `/opt/lead-helper/` | `launch.conf` |
+| Deployed commit | `$INSTALL_PATH/.deployed` | `/opt/lead-helper/.deployed` | `deploy.sh` |
 | State and secrets | `/var/lib/<name>/` | `/var/lib/lead-helper/` | `.nix` tmpfiles |
 | Container vault token (`SECRETS_TARGET`) | `/var/lib/<name>/openbao-token` | `/var/lib/lead-helper/openbao-token` | `launch.conf` |
 | Linux service user | `<name>` | `lead-helper` | `<name>-service.nix` |
@@ -197,8 +199,24 @@ The purpose of `deploy.sh` is to apply every change to a running container after
 | `--token-stdin` pushes the token `0600 root:root` to `SECRETS_TARGET`, restarts the units that load it, and verifies they are active | `nixos-rebuild` does not restart an unchanged unit |
 | Without `--token-stdin`, the container's token is untouched | Routine deploys need no vault login |
 | Never revokes the token it replaces; revokes a piped token it failed to deliver | Replacing is deliberate and separate — see [Minting and Delivering the Token](#minting-and-delivering-the-token); an undelivered token must not linger |
+| Writes the deployed commit to `$INSTALL_PATH/.deployed` | The instance can be checked against `main` — see [Deployed Commit](#deployed-commit) |
 
 `incus file push -r` does not delete files removed locally — `rm` them on the container before deploying. For a `-00` whose rebuild can bounce a customer-facing service, add a dry-activate preview and `--confirm <name>`, as `host-idempiere/deploy-nixos.sh` does.
+
+## Deployed Commit
+
+The purpose of this section is to let a `host-*` instance say which commit it is running, so drift against `main` is a fact rather than a reconstruction. It is important because an instance can be half-updated — a tree pushed, a rebuild that failed — or silently diverged, and neither shows up in `git` on the operator's machine.
+
+| Element | Value |
+|---------|-------|
+| File | `$INSTALL_PATH/.deployed` — mode `0644 root:root`, so any user can read it |
+| Value | `commit=<40-hex>` on the first line; further `key=value` lines are optional context |
+| Source | `git rev-parse HEAD` **in the repo `deploy.sh` runs from** — never read back from the container's copy |
+| Written | by the host repo's `deploy.sh`, after a successful apply |
+
+`host-ai-user/deploy.sh` is the reference implementation. A commit that does not match `main` is either a stale instance or a deploy that never merged — the optional `branch` and `dirty` keys say which.
+
+> 📝 **Note** — The file lives inside the payload tree, so a clone that copies the tree inherits it. A clone is its own identity: until it deploys, the file it carries describes the source.
 
 ## Building a New host-* Repo
 
